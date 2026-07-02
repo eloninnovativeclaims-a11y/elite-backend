@@ -78,6 +78,7 @@ router.put('/users/:id', auth, isAdmin, async (req, res) => {
 
 // Delete user
 // Delete user (with cascade cleanup)
+// Delete user (with cascade cleanup)
 router.delete('/users/:id', auth, isAdmin, async (req, res) => {
     const client = await pool.connect();
     
@@ -110,10 +111,7 @@ router.delete('/users/:id', auth, isAdmin, async (req, res) => {
         // 5. Delete compare items
         await client.query('DELETE FROM compare WHERE user_id = $1', [userId]);
         
-        // 6. Delete addresses
-        await client.query('DELETE FROM user_addresses WHERE user_id = $1', [userId]);
-        
-        // 7. Finally delete the user
+        // 6. Finally delete the user
         const result = await client.query('DELETE FROM users WHERE id = $1 RETURNING id', [userId]);
         
         if (result.rows.length === 0) {
