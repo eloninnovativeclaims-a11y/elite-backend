@@ -77,23 +77,59 @@ router.put('/users/:id', auth, isAdmin, async (req, res) => {
 });
 
 // Delete user
+// Delete user (with cascade cleanup)
 router.delete('/users/:id', auth, isAdmin, async (req, res) => {
+    const client = await pool.connect();
+    
     try {
         // Don't allow deleting yourself
         if (parseInt(req.params.id) === req.user.id) {
             return res.status(400).json({ error: 'Cannot delete your own account' });
         }
         
-        const result = await pool.query('DELETE FROM users WHERE id = $1 RETURNING id', [req.params.id]);
+        await client.query('BEGIN');
+        
+        const userId = req.params.id;
+        
+        // Delete related data in correct order
+        // 1. Delete order items first (they reference orders)
+        await client.query(`
+            DELETE FROM order_items 
+            WHERE order_id IN (SELECT id FROM orders WHERE user_id = $1)
+        `, [userId]);
+        
+        // 2. Delete orders
+        await client.query('DELETE FROM orders WHERE user_id = $1', [userId]);
+        
+        // 3. Delete cart items
+        await client.query('DELETE FROM cart WHERE user_id = $1', [userId]);
+        
+        // 4. Delete wishlist items
+        await client.query('DELETE FROM wishlist WHERE user_id = $1', [userId]);
+        
+        // 5. Delete compare items
+        await client.query('DELETE FROM compare WHERE user_id = $1', [userId]);
+        
+        // 6. Delete addresses
+        await client.query('DELETE FROM user_addresses WHERE user_id = $1', [userId]);
+        
+        // 7. Finally delete the user
+        const result = await client.query('DELETE FROM users WHERE id = $1 RETURNING id', [userId]);
         
         if (result.rows.length === 0) {
+            await client.query('ROLLBACK');
             return res.status(404).json({ error: 'User not found' });
         }
         
-        res.json({ message: 'User deleted successfully' });
+        await client.query('COMMIT');
+        
+        res.json({ message: 'User and all related data deleted successfully' });
     } catch (error) {
+        await client.query('ROLLBACK');
         console.error('Delete user error:', error);
-        res.status(500).json({ error: 'Server error' });
+        res.status(500).json({ error: 'Failed to delete user: ' + error.message });
+    } finally {
+        client.release();
     }
 });
 
